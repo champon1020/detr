@@ -2,6 +2,7 @@
 import torch.utils.data
 import torchvision
 
+from .ag.action_genome import build as build_ag
 from .coco import build as build_coco
 
 
@@ -16,10 +17,19 @@ def get_coco_api_from_dataset(dataset):
 
 
 def build_dataset(image_set, args):
-    if args.dataset_file == 'coco':
+    if args.dataset_file == "ag":
+        if image_set == "train":
+            return build_ag(image_set, args)
+        else:
+            return build_coco(image_set, args)
+
+    if args.dataset_file == "coco":
         return build_coco(image_set, args)
-    if args.dataset_file == 'coco_panoptic':
+
+    if args.dataset_file == "coco_panoptic":
         # to avoid making panopticapi required for coco
         from .coco_panoptic import build as build_coco_panoptic
+
         return build_coco_panoptic(image_set, args)
-    raise ValueError(f'dataset {args.dataset_file} not supported')
+
+    raise ValueError(f"dataset {args.dataset_file} not supported")
