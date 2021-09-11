@@ -1,8 +1,10 @@
+import json
 import os
 import pickle
 from pathlib import Path
 
 import datasets.transforms as T
+import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from tqdm import tqdm
@@ -14,38 +16,49 @@ class ActionGenome(Dataset):
 
         self.image_set = image_set
         self.img_folder = img_folder
-        self._transforms = transforms
+        self.transforms = transforms
         self.ids = []
         self.dataset = {}
-        self.object_classes = {}
         self._make_dataset(ann_folder)
 
     def _make_dataset(self, ann_folder):
         print("Making action genome dataset...")
+
+        image_ids = []
         with open(os.path.join(ann_folder, "frame_list.txt"), "r") as file:
             lines = file.readlines()
-            self.ids = [line.rstrip() for line in lines]
+            image_ids = [line.rstrip() for line in lines]
 
+        try:
+            ann_file = pickle.load(open(os.path.join(ann_folder, "action_genome_detection.pkl"), "rb"))
+            self.ids = image_ids
+            self.dataset = ann_file
+            return
+        except:
+            pass
+
+        object_classes = {}
         with open(os.path.join(ann_folder, "object_classes.txt"), "r") as file:
             lines = file.readlines()
             class_id = 0
             for line in lines:
-                self.object_classes[line.rstrip()] = class_id
+                object_classes[line.rstrip()] = class_id
                 class_id += 1
 
-        object_bbox_and_rel = pickle.load(
-            open(os.path.join(ann_folder, "object_bbox_and_relationship.pkl"), "rb")
-        )
+        object_bbox_and_rel = pickle.load(open(os.path.join(ann_folder, "object_bbox_and_relationship.pkl"), "rb"))
 
-        for id in tqdm(self.ids):
+        for i, id in tqdm(enumerate(image_ids)):
             rels = object_bbox_and_rel[id]
             boxes, classes = [], []
             for rel in rels:
                 if rel["metadata"]["set"] != self.image_set:
                     continue
 
+                if rel["bbox"] is None:
+                    continue
+
                 boxes.append(rel["bbox"])
-                classes.append(self.object_classes[rel["class"]])
+                classes.append(object_classes[rel["class"].replace("/", "")])
 
             image = Image.open(os.path.join(self.img_folder, id))
             w, h = image.size
@@ -57,14 +70,30 @@ class ActionGenome(Dataset):
 
             classes = torch.tensor(classes, dtype=torch.int64)
 
-            self.dataset[id] = {"boxes": boxes, "labels": classes, "image_id": id}
+            keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
+            boxes = boxes[keep]
+            classes = classes[keep]
+
+            self.ids.append(id)
+            self.dataset[id] = {
+                "boxes": boxes,
+                "labels": classes,
+                "image_id": torch.tensor(i),
+                "size": torch.as_tensor([int(h), int(w)]),
+                "orig_size": torch.as_tensor([int(h), int(w)]),
+            }
+
+        pickle.dump(
+            self.dataset,
+            open(os.path.join(ann_folder, "action_genome_detection.pkl"), "wb"),
+        )
 
     def __len__(self):
         return len(self.ids)
 
     def __getitem__(self, idx):
         id = self.ids[idx]
-        image = self._laod_image(id)
+        image = self._load_image(id)
         target = self._load_target(id)
 
         if self.transforms is not None:
@@ -92,9 +121,7 @@ class ActionGenome(Dataset):
 
 def ag_transforms(image_set):
 
-    normalize = T.Compose(
-        [T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
-    )
+    normalize = T.Compose([T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
     scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
 
