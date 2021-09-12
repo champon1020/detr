@@ -2,13 +2,17 @@
 import argparse
 import datetime
 import json
+import os
 import random
+import signal
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
 import torch
-import torch.multiprocessing
+import torch.distributed as dist
+import torch.multiprocessing as mp
 from torch.utils.data import DataLoader, DistributedSampler
 
 import datasets
@@ -151,15 +155,63 @@ def get_args_parser():
     parser.add_argument("--num_workers", default=2, type=int)
 
     # distributed training parameters
-    parser.add_argument("--world_size", default=1, type=int, help="number of distributed processes")
-    parser.add_argument("--dist_url", default="env://", help="url used to set up distributed training")
+    parser.add_argument("--distributed", action="store_true", help="whether distributed process or not")
+    parser.add_argument("--port_num", default=29500, type=int, help="port number when the process is multi node")
+
+    # multi node distributed training parameters
+    parser.add_argument("--multi_node", action="store_true", help="whether multi node process or not")
     return parser
 
 
-def main(args):
-    torch.multiprocessing.set_sharing_strategy("file_system")
+def setup_distributed(args, local_rank):
+    args.local_rank = local_rank
 
-    utils.init_distributed_mode(args)
+    if args.multi_node:
+        current_dir = os.getcwd()
+        with open(os.path.join(current_dir, "hostfile")) as f:
+            host = f.readlines()
+        host[0] = host[0].rstrip("\n")
+        args.dist_url = f"tcp://{host[0]}:{args.port_num}"
+        args.rank = args.ngpus * args.node_rank + args.local_rank
+        args.world_size = args.ngpus * args.node_size
+    else:
+        args.dist_url = f"tcp://127.0.0.1:{args.port_num}"
+        args.rank = local_rank
+        args.world_size = args.ngpus * args.node_size
+
+    torch.cuda.set_device(args.local_rank)
+
+    args.dist_backend = "nccl"
+    print("| distributed init (rank {}) / (world_size {}): {}".format(args.rank, args.world_size, args.dist_url), flush=True)
+    torch.distributed.init_process_group(
+        backend=args.dist_backend,
+        init_method=args.dist_url,
+        world_size=args.world_size,
+        rank=args.rank,
+    )
+
+    # Disables printing when not in master process
+    torch.distributed.barrier()
+    # setup_for_distributed(args.rank == 0)
+    import builtins as __builtin__
+
+    builtin_print = __builtin__.print
+
+    def print_only_master(*_args, **kwargs):
+        force = kwargs.pop("force", False)
+        if args.rank == 0 or force:
+            builtin_print(*_args, **kwargs)
+
+    __builtin__.print = print_only_master
+
+    # To resolve "Too many open files" error.
+    mp.set_sharing_strategy("file_system")
+
+
+def _main(local_rank, args):
+    if args.distributed:
+        setup_distributed(args, local_rank)
+
     print("git:\n  {}\n".format(utils.get_sha()))
 
     if args.frozen_weights is not None:
@@ -179,7 +231,7 @@ def main(args):
 
     model_without_ddp = model
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank])
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("number of params:", n_parameters)
@@ -329,9 +381,42 @@ def main(args):
     print("Training time {}".format(total_time_str))
 
 
+def cleanup(args):
+    if args.distributed:
+        dist.destroy_process_group()
+
+
+def main(local_rank, args):
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(1))
+    try:
+        _main(local_rank, args)
+    finally:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        cleanup(args)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("DETR training and evaluation script", parents=[get_args_parser()])
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    main(args)
+
+    if args.distributed:
+        if args.multi_node and "OMPI_COMM_WORLD_RANK" in os.environ and "OMPI_COMM_WORLD_SIZE" in os.environ:
+            print("Multi node distributed mode")
+            args.node_rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
+            args.node_size = int(os.environ["OMPI_COMM_WORLD_SIZE"])
+            args.ngpus = torch.cuda.device_count()
+        else:
+            print("Single node distributed mode")
+            args.node_rank = 0
+            args.node_size = 1
+            args.ngpus = torch.cuda.device_count()
+
+        print("node_rank: {}".format(args.node_rank))
+        print("node_size: {}".format(args.node_size))
+        print("ngpus: {}".format(args.ngpus))
+    else:
+        print("Not distributed")
+
+    mp.spawn(main, nprocs=args.ngpus, args=(args,))
