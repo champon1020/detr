@@ -18,6 +18,9 @@ from torch.utils.data import DataLoader, DistributedSampler
 import datasets
 import util.misc as utils
 from datasets import build_dataset, get_coco_api_from_dataset
+from datasets.ag.action_genome_eval import ActionGenomeEvaluator
+from datasets.coco_eval import CocoEvaluator
+from datasets.panoptic_eval import PanopticEvaluator
 from engine import evaluate, train_one_epoch
 from models import build_model
 
@@ -32,13 +35,14 @@ def get_args_parser():
     parser.add_argument("--lr_drop", default=200, type=int)
     parser.add_argument("--clip_max_norm", default=0.1, type=float, help="gradient clipping max norm")
 
-    # Model parameters
+    # * Model parameters
     parser.add_argument(
         "--frozen_weights",
         type=str,
         default=None,
         help="Path to the pretrained model. If set, only the mask head will be trained",
     )
+
     # * Backbone
     parser.add_argument(
         "--backbone",
@@ -101,13 +105,14 @@ def get_args_parser():
         help="Train segmentation head if the flag is provided",
     )
 
-    # Loss
+    # * Loss
     parser.add_argument(
         "--no_aux_loss",
         dest="aux_loss",
         action="store_false",
         help="Disables auxiliary decoding losses (loss at each layer)",
     )
+
     # * Matcher
     parser.add_argument(
         "--set_cost_class",
@@ -139,7 +144,7 @@ def get_args_parser():
         help="Relative classification weight of the no-object class",
     )
 
-    # dataset parameters
+    # * Dataset parameters
     parser.add_argument("--dataset_file", default="coco")
     parser.add_argument("--ag_path", type=str)
     parser.add_argument("--coco_path", type=str)
@@ -154,11 +159,13 @@ def get_args_parser():
     parser.add_argument("--eval", action="store_true")
     parser.add_argument("--num_workers", default=2, type=int)
 
-    # distributed training parameters
+    # * Distributed training parameters
     parser.add_argument("--distributed", action="store_true", help="whether distributed process or not")
-    parser.add_argument("--port_num", default=29500, type=int, help="port number when the process is multi node")
+    parser.add_argument(
+        "--port_num", default=29500, type=int, help="port number when the process is multi node"
+    )
 
-    # multi node distributed training parameters
+    # * Multi node distributed training parameters
     parser.add_argument("--multi_node", action="store_true", help="whether multi node process or not")
     return parser
 
@@ -182,7 +189,12 @@ def setup_distributed(args, local_rank):
     torch.cuda.set_device(args.local_rank)
 
     args.dist_backend = "nccl"
-    print("| distributed init (rank {}) / (world_size {}): {}".format(args.rank, args.world_size, args.dist_url), flush=True)
+    print(
+        "| distributed init (rank {}) / (world_size {}): {}".format(
+            args.rank, args.world_size, args.dist_url
+        ),
+        flush=True,
+    )
     torch.distributed.init_process_group(
         backend=args.dist_backend,
         init_method=args.dist_url,
@@ -226,9 +238,11 @@ def _main(local_rank, args):
     np.random.seed(seed)
     random.seed(seed)
 
+    # Setup model, criterion, postprocessors.
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
+    # Setup distributed model.
     model_without_ddp = model
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank])
@@ -236,19 +250,28 @@ def _main(local_rank, args):
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("number of params:", n_parameters)
 
+    # Setup optimizer.
     param_dicts = [
-        {"params": [p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad]},
         {
-            "params": [p for n, p in model_without_ddp.named_parameters() if "backbone" in n and p.requires_grad],
+            "params": [
+                p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad
+            ]
+        },
+        {
+            "params": [
+                p for n, p in model_without_ddp.named_parameters() if "backbone" in n and p.requires_grad
+            ],
             "lr": args.lr_backbone,
         },
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 
+    # Setup dataset.
     dataset_train = build_dataset(image_set="train", args=args)
     dataset_val = build_dataset(image_set="val", args=args)
 
+    # Setup distributed dataset.
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train)
         sampler_val = DistributedSampler(dataset_val, shuffle=False)
@@ -258,6 +281,7 @@ def _main(local_rank, args):
 
     batch_sampler_train = torch.utils.data.BatchSampler(sampler_train, args.batch_size, drop_last=True)
 
+    # Setup dataloader.
     data_loader_train = DataLoader(
         dataset_train,
         batch_sampler=batch_sampler_train,
@@ -273,6 +297,7 @@ def _main(local_rank, args):
         num_workers=args.num_workers,
     )
 
+    # Setup dataset file for evaluation.
     if args.dataset_file == "coco_panoptic":
         # We also evaluate AP during panoptic training, on original coco DS
         coco_val = datasets.coco.build("val", args)
@@ -284,6 +309,7 @@ def _main(local_rank, args):
         checkpoint = torch.load(args.frozen_weights, map_location="cpu")
         model_without_ddp.detr.load_state_dict(checkpoint["model"])
 
+    # Setup resume.
     output_dir = Path(args.output_dir)
     if args.resume:
         if args.resume.startswith("https"):
@@ -291,13 +317,35 @@ def _main(local_rank, args):
         else:
             checkpoint = torch.load(args.resume, map_location="cpu")
         model_without_ddp.load_state_dict(checkpoint["model"])
-        if not args.eval and "optimizer" in checkpoint and "lr_scheduler" in checkpoint and "epoch" in checkpoint:
+        if (
+            not args.eval
+            and "optimizer" in checkpoint
+            and "lr_scheduler" in checkpoint
+            and "epoch" in checkpoint
+        ):
             optimizer.load_state_dict(checkpoint["optimizer"])
             lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
             args.start_epoch = checkpoint["epoch"] + 1
 
+    # Setup evaluator.
+    if args.dataset_file == "ag":
+        evaluator = ActionGenomeEvaluator(device)
+    elif args.dataset_file == "coco":
+        iou_types = tuple(k for k in ("segm", "bbox") if k in postprocessors.keys())
+        evaluator = CocoEvaluator(base_ds, iou_types)
+        # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
+    else:
+        evaluator = PanopticEvaluator(
+            data_loader_val.dataset.ann_file,
+            data_loader_val.dataset.ann_folder,
+            output_dir=os.path.join(output_dir, "panoptic_eval"),
+        )
+
+    # Execute evaluation only.
     if args.eval:
-        test_stats, coco_evaluator = evaluate(
+        print("Start evaluation")
+        test_stats = evaluate(
+            evaluator,
             model,
             criterion,
             postprocessors,
@@ -307,9 +355,11 @@ def _main(local_rank, args):
             args.output_dir,
         )
         if args.output_dir:
-            utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+            if isinstance(evaluator, CocoEvaluator):
+                utils.save_on_master(evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
+    # Execute training.
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
@@ -342,7 +392,8 @@ def _main(local_rank, args):
                     checkpoint_path,
                 )
 
-        test_stats, coco_evaluator = evaluate(
+        test_stats = evaluate(
+            evaluator,
             model,
             criterion,
             postprocessors,
@@ -364,17 +415,21 @@ def _main(local_rank, args):
                 f.write(json.dumps(log_stats) + "\n")
 
             # for evaluation logs
-            if coco_evaluator is not None:
+            if isinstance(evaluator, ActionGenomeEvaluator):
                 (output_dir / "eval").mkdir(exist_ok=True)
-                if "bbox" in coco_evaluator.coco_eval:
+                filenames = ["latest.pth"]
+                if epoch % 50 == 0:
+                    filenames.append(f"{epoch:03}.pth")
+                for name in filenames:
+                    torch.save(evaluator.eval, output_dir / "eval" / name)
+            elif isinstance(evaluator, CocoEvaluator):
+                (output_dir / "eval").mkdir(exist_ok=True)
+                if "bbox" in evaluator.coco_eval:
                     filenames = ["latest.pth"]
                     if epoch % 50 == 0:
                         filenames.append(f"{epoch:03}.pth")
                     for name in filenames:
-                        torch.save(
-                            coco_evaluator.coco_eval["bbox"].eval,
-                            output_dir / "eval" / name,
-                        )
+                        torch.save(evaluator.coco_eval["bbox"].eval, output_dir / "eval" / name)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

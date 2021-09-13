@@ -62,9 +62,7 @@ class DETR(nn.Module):
 
         src, mask = features[-1].decompose()
         assert mask is not None
-        hs = self.transformer(
-            self.input_proj(src), mask, self.query_embed.weight, pos[-1]
-        )[0]
+        hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0]
 
         outputs_class = self.class_embed(hs)
         outputs_coord = self.bbox_embed(hs).sigmoid()
@@ -78,10 +76,7 @@ class DETR(nn.Module):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [
-            {"pred_logits": a, "pred_boxes": b}
-            for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
-        ]
+        return [{"pred_logits": a, "pred_boxes": b} for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
 
 
 class SetCriterion(nn.Module):
@@ -118,9 +113,7 @@ class SetCriterion(nn.Module):
         src_logits = outputs["pred_logits"]
 
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat(
-            [t["labels"][J] for t, (_, J) in zip(targets, indices)]
-        )
+        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
         target_classes = torch.full(
             src_logits.shape[:2],
             self.num_classes,
@@ -129,9 +122,7 @@ class SetCriterion(nn.Module):
         )
         target_classes[idx] = target_classes_o
 
-        loss_ce = F.cross_entropy(
-            src_logits.transpose(1, 2), target_classes, self.empty_weight
-        )
+        loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
         losses = {"loss_ce": loss_ce}
 
         if log:
@@ -146,9 +137,7 @@ class SetCriterion(nn.Module):
         """
         pred_logits = outputs["pred_logits"]
         device = pred_logits.device
-        tgt_lengths = torch.as_tensor(
-            [len(v["labels"]) for v in targets], device=device
-        )
+        tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
         # Count the number of predictions that are NOT "no-object" (which is the last class)
         card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
@@ -163,9 +152,7 @@ class SetCriterion(nn.Module):
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs["pred_boxes"][idx]
-        target_boxes = torch.cat(
-            [t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0
-        )
+        target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
 
@@ -216,17 +203,13 @@ class SetCriterion(nn.Module):
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
-        batch_idx = torch.cat(
-            [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
-        )
+        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
     def _get_tgt_permutation_idx(self, indices):
         # permute targets following indices
-        batch_idx = torch.cat(
-            [torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)]
-        )
+        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
@@ -278,9 +261,7 @@ class SetCriterion(nn.Module):
                     if loss == "labels":
                         # Logging is enabled only for the last layer
                         kwargs = {"log": False}
-                    l_dict = self.get_loss(
-                        loss, aux_outputs, targets, indices, num_boxes, **kwargs
-                    )
+                    l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
                     l_dict = {k + f"_{i}": v for k, v in l_dict.items()}
                     losses.update(l_dict)
 
@@ -314,10 +295,7 @@ class PostProcess(nn.Module):
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
         boxes = boxes * scale_fct[:, None, :]
 
-        results = [
-            {"scores": s, "labels": l, "boxes": b}
-            for s, l, b in zip(scores, labels, boxes)
-        ]
+        results = [{"scores": s, "labels": l, "boxes": b} for s, l, b in zip(scores, labels, boxes)]
 
         return results
 
@@ -329,9 +307,7 @@ class MLP(nn.Module):
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
-        self.layers = nn.ModuleList(
-            nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim])
-        )
+        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
 
     def forward(self, x):
         for i, layer in enumerate(self.layers):
@@ -351,7 +327,7 @@ def build(args):
     if args.dataset_file == "coco":
         num_classes = 91
     elif args.dataset_file == "ag":
-        num_classes = 35
+        num_classes = 36  # include 'person'
     else:
         num_classes = 20 if args.dataset_file != "coco" else 91
 
@@ -403,8 +379,6 @@ def build(args):
         postprocessors["segm"] = PostProcessSegm()
         if args.dataset_file == "coco_panoptic":
             is_thing_map = {i: i <= 90 for i in range(201)}
-            postprocessors["panoptic"] = PostProcessPanoptic(
-                is_thing_map, threshold=0.85
-            )
+            postprocessors["panoptic"] = PostProcessPanoptic(is_thing_map, threshold=0.85)
 
     return model, criterion, postprocessors

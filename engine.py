@@ -10,6 +10,7 @@ from typing import Iterable
 import torch
 
 import util.misc as utils
+from datasets.ag.action_genome_eval import ActionGenomeEvaluator
 from datasets.coco_eval import CocoEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
 from util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
@@ -44,7 +45,9 @@ def train_one_epoch(
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
         loss_dict_reduced_unscaled = {f"{k}_unscaled": v for k, v in loss_dict_reduced.items()}
-        loss_dict_reduced_scaled = {k: v * weight_dict[k] for k, v in loss_dict_reduced.items() if k in weight_dict}
+        loss_dict_reduced_scaled = {
+            k: v * weight_dict[k] for k, v in loss_dict_reduced.items() if k in weight_dict
+        }
         losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
 
         loss_value = losses_reduced_scaled.item()
@@ -71,7 +74,7 @@ def train_one_epoch(
 
 
 @torch.no_grad()
-def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
+def evaluate(evaluator, model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
     model.eval()
     criterion.eval()
 
@@ -79,10 +82,12 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
     metric_logger.add_meter("class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}"))
     header = "Test:"
 
-    iou_types = tuple(k for k in ("segm", "bbox") if k in postprocessors.keys())
-    coco_evaluator = CocoEvaluator(base_ds, iou_types)
+    # iou_types = tuple(k for k in ("segm", "bbox") if k in postprocessors.keys())
+    # ag_evaluator = ActionGenomeEvaluator()
+    # coco_evaluator = CocoEvaluator(base_ds, iou_types)
     # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
 
+    """
     panoptic_evaluator = None
     if "panoptic" in postprocessors.keys():
         panoptic_evaluator = PanopticEvaluator(
@@ -90,6 +95,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
             data_loader.dataset.ann_folder,
             output_dir=os.path.join(output_dir, "panoptic_eval"),
         )
+    """
 
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
@@ -101,7 +107,9 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
 
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
-        loss_dict_reduced_scaled = {k: v * weight_dict[k] for k, v in loss_dict_reduced.items() if k in weight_dict}
+        loss_dict_reduced_scaled = {
+            k: v * weight_dict[k] for k, v in loss_dict_reduced.items() if k in weight_dict
+        }
         loss_dict_reduced_unscaled = {f"{k}_unscaled": v for k, v in loss_dict_reduced.items()}
         metric_logger.update(
             loss=sum(loss_dict_reduced_scaled.values()),
@@ -116,42 +124,58 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
             target_sizes = torch.stack([t["size"] for t in targets], dim=0)
             results = postprocessors["segm"](results, outputs, orig_target_sizes, target_sizes)
         res = {target["image_id"].item(): output for target, output in zip(targets, results)}
-        if coco_evaluator is not None:
-            coco_evaluator.update(res)
 
-        if panoptic_evaluator is not None:
+        if isinstance(evaluator, ActionGenomeEvaluator):
+            evaluator.update(results, targets)
+        elif isinstance(evaluator, CocoEvaluator):
+            evaluator.update(res)
+        elif isinstance(evaluator, PanopticEvaluator):
             res_pano = postprocessors["panoptic"](outputs, target_sizes, orig_target_sizes)
             for i, target in enumerate(targets):
                 image_id = target["image_id"].item()
                 file_name = f"{image_id:012d}.png"
                 res_pano[i]["image_id"] = image_id
                 res_pano[i]["file_name"] = file_name
-
-            panoptic_evaluator.update(res_pano)
+            evaluator.update(res_pano)
+        else:
+            raise ValueError("not valid evaluator")
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    if coco_evaluator is not None:
-        coco_evaluator.synchronize_between_processes()
-    if panoptic_evaluator is not None:
-        panoptic_evaluator.synchronize_between_processes()
+    if isinstance(evaluator, ActionGenomeEvaluator):
+        evaluator.synchronize_between_processes()
+    elif isinstance(evaluator, CocoEvaluator):
+        evaluator.synchronize_between_processes()
+    elif isinstance(evaluator, PanopticEvaluator):
+        evaluator.synchronize_between_processes()
+    else:
+        raise ValueError("not valid evaluator")
 
     # accumulate predictions from all images
-    if coco_evaluator is not None:
-        coco_evaluator.accumulate()
-        coco_evaluator.summarize()
-    panoptic_res = None
-    if panoptic_evaluator is not None:
-        panoptic_res = panoptic_evaluator.summarize()
+    if isinstance(evaluator, ActionGenomeEvaluator):
+        evaluator.summarize()
+    elif isinstance(evaluator, CocoEvaluator):
+        evaluator.accumulate()
+        evaluator.summarize()
+    elif isinstance(evaluator, PanopticEvaluator):
+        panoptic_res = evaluator.summarize()
+    else:
+        raise ValueError("not valid evaluator")
+
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    if coco_evaluator is not None:
+    if isinstance(evaluator, ActionGenomeEvaluator):
+        stats["mAP"] = evaluator.eval
+    elif isinstance(evaluator, CocoEvaluator):
         if "bbox" in postprocessors.keys():
-            stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
+            stats["coco_eval_bbox"] = evaluator.coco_eval["bbox"].stats.tolist()
         if "segm" in postprocessors.keys():
-            stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
-    if panoptic_res is not None:
+            stats["coco_eval_masks"] = evaluator.coco_eval["segm"].stats.tolist()
+    elif isinstance(panoptic_res, PanopticEvaluator):
         stats["PQ_all"] = panoptic_res["All"]
         stats["PQ_th"] = panoptic_res["Things"]
         stats["PQ_st"] = panoptic_res["Stuff"]
-    return stats, coco_evaluator
+    else:
+        raise ValueError("not valid evaluator")
+
+    return stats

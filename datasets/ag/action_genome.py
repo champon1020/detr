@@ -8,18 +8,21 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from tqdm import tqdm
+from util.box_ops import list_box_xyxy_to_xywh
 
 
 class ActionGenome(Dataset):
-    def __init__(self, image_set, img_folder, ann_folder, transforms):
-        assert image_set in ["train", "test"]
+    def __init__(self, image_set, img_folder, ann_folder, transforms=None):
+        assert image_set in ["train", "val", "dummy"]
 
-        self.image_set = image_set
+        self.image_set = image_set if image_set == "train" else "test"
         self.img_folder = img_folder
         self.transforms = transforms
         self.ids = []
         self.dataset = {}
-        self._make_dataset(ann_folder)
+
+        if image_set != "dummy":
+            self._make_dataset(ann_folder)
 
     def _make_dataset(self, ann_folder):
         print("Making action genome dataset...")
@@ -29,13 +32,17 @@ class ActionGenome(Dataset):
             lines = file.readlines()
             image_ids = [line.rstrip() for line in lines]
 
+        """
         try:
-            ann_file = pickle.load(open(os.path.join(ann_folder, "action_genome_detection.pkl"), "rb"))
+            ann_file = pickle.load(
+                open(os.path.join(ann_folder, f"action_genome_detection_{self.image_set}.pkl"), "rb")
+            )
             self.ids = image_ids
             self.dataset = ann_file
             return
         except:
             pass
+        """
 
         object_classes = {}
         with open(os.path.join(ann_folder, "object_classes.txt"), "r") as file:
@@ -45,20 +52,37 @@ class ActionGenome(Dataset):
                 object_classes[line.rstrip()] = class_id
                 class_id += 1
 
-        object_bbox_and_rel = pickle.load(open(os.path.join(ann_folder, "object_bbox_and_relationship.pkl"), "rb"))
+        object_bbox_and_rel = pickle.load(
+            open(os.path.join(ann_folder, "object_bbox_and_relationship.pkl"), "rb")
+        )
+
+        person_bbox = pickle.load(open(os.path.join(ann_folder, "person_bbox.pkl"), "rb"))
 
         for i, id in tqdm(enumerate(image_ids)):
             rels = object_bbox_and_rel[id]
             boxes, classes = [], []
+            image_set = ""
             for rel in rels:
                 if rel["metadata"]["set"] != self.image_set:
                     continue
+
+                image_set = rel["metadata"]["set"]
 
                 if rel["bbox"] is None:
                     continue
 
                 boxes.append(rel["bbox"])
                 classes.append(object_classes[rel["class"].replace("/", "")])
+
+            # If image_set corresponds to the self.image_set, extract the person boxes.
+            if image_set == self.image_set:
+                person = person_bbox[id]
+                bbox = person["bbox"]
+                boxes.extend([list_box_xyxy_to_xywh(b) for b in bbox])
+                classes.extend([object_classes["person"] for _ in range(len(bbox))])
+
+            if len(boxes) == 0:
+                continue
 
             image = Image.open(os.path.join(self.img_folder, id))
             w, h = image.size
@@ -83,10 +107,12 @@ class ActionGenome(Dataset):
                 "orig_size": torch.as_tensor([int(h), int(w)]),
             }
 
+        """
         pickle.dump(
             self.dataset,
-            open(os.path.join(ann_folder, "action_genome_detection.pkl"), "wb"),
+            open(os.path.join(ann_folder, f"action_genome_detection_{self.image_set}.pkl"), "wb"),
         )
+        """
 
     def __len__(self):
         return len(self.ids)
@@ -143,7 +169,6 @@ def ag_transforms(image_set):
             ]
         )
 
-    """
     if image_set == "val":
         return T.Compose(
             [
@@ -151,12 +176,14 @@ def ag_transforms(image_set):
                 normalize,
             ]
         )
-    """
 
     raise ValueError(f"unknown {image_set}")
 
 
 def build(image_set, args):
+    if args.eval and image_set == "train":
+        return ActionGenome("dummy", "", "")
+
     root = Path(args.ag_path)
     assert root.exists(), f"provided COCO path {root} does not exist"
 

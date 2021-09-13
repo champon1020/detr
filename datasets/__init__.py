@@ -18,10 +18,7 @@ def get_coco_api_from_dataset(dataset):
 
 def build_dataset(image_set, args):
     if args.dataset_file == "ag":
-        if image_set == "train":
-            return build_ag(image_set, args)
-        else:
-            return build_coco(image_set, args)
+        return build_ag(image_set, args)
 
     if args.dataset_file == "coco":
         return build_coco(image_set, args)
