@@ -167,6 +167,7 @@ def get_args_parser():
 
     # * Multi node distributed training parameters
     parser.add_argument("--multi_node", action="store_true", help="whether multi node process or not")
+    parser.add_argument("--hostfile", default="./hostfile", type=str, help="path of hostfile")
     return parser
 
 
@@ -175,7 +176,7 @@ def setup_distributed(args, local_rank):
 
     if args.multi_node:
         current_dir = os.getcwd()
-        with open(os.path.join(current_dir, "hostfile")) as f:
+        with open(args.hostfile) as f:
             host = f.readlines()
         host[0] = host[0].rstrip("\n")
         args.dist_url = f"tcp://{host[0]}:{args.port_num}"
