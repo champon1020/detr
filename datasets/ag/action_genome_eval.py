@@ -46,7 +46,7 @@ class ActionGenomeEvaluator(object):
         self._reset()
 
     def _reset(self):
-        self.target = []
+        self.targets = []
         self.predictions = []
 
     def _evaluate(self, pred_boxes, pred_labels, pred_scores, true_boxes, true_labels):
