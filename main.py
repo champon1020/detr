@@ -34,6 +34,7 @@ def get_args_parser():
     parser.add_argument("--epochs", default=300, type=int)
     parser.add_argument("--lr_drop", default=200, type=int)
     parser.add_argument("--clip_max_norm", default=0.1, type=float, help="gradient clipping max norm")
+    parser.add_argument("--eval_span", default=5, type=int)
 
     # * Model parameters
     parser.add_argument(
@@ -393,16 +394,18 @@ def _main(local_rank, args):
                     checkpoint_path,
                 )
 
-        test_stats = evaluate(
-            evaluator,
-            model,
-            criterion,
-            postprocessors,
-            data_loader_val,
-            base_ds,
-            device,
-            args.output_dir,
-        )
+        test_stats = {"eval": "Skip"}
+        if (epoch + 1) % args.eval_span == 0:
+            test_stats = evaluate(
+                evaluator,
+                model,
+                criterion,
+                postprocessors,
+                data_loader_val,
+                base_ds,
+                device,
+                args.output_dir,
+            )
 
         log_stats = {
             **{f"train_{k}": v for k, v in train_stats.items()},

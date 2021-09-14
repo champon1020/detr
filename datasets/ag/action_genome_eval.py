@@ -4,14 +4,14 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from util.misc import all_extend, all_gather
+from tqdm import tqdm
 
 
 class ActionGenomeEvaluator(object):
     def __init__(self, device):
         self.device = device
         self.eval = {}
-        self.targets = []
-        self.predictions = []
+        self._reset()
 
     def update(self, predictions, targets):
         self.targets.append(targets)
@@ -43,6 +43,11 @@ class ActionGenomeEvaluator(object):
 
         self.eval["mAP"] = mAP
         print(f"mAP: {mAP}")
+        self._reset()
+
+    def _reset(self):
+        self.target = []
+        self.predictions = []
 
     def _evaluate(self, pred_boxes, pred_labels, pred_scores, true_boxes, true_labels):
         """
@@ -89,6 +94,8 @@ class ActionGenomeEvaluator(object):
 
         # Loop for the classes.
         for c in range(n_classes):
+            print(f"Start class {c}")
+
             # Extract only objects with this class.
             class_true_images = true_images[true_labels == c]
             class_true_boxes = true_boxes[true_labels == c]
@@ -113,7 +120,7 @@ class ActionGenomeEvaluator(object):
             fp = torch.zeros((class_n_pred_detections), dtype=torch.float)
 
             # Loop for detected objects.
-            for d in range(class_n_pred_detections):
+            for d in tqdm(range(class_n_pred_detections)):
                 this_pred_image = class_pred_images[d]
                 this_pred_box = class_pred_boxes[d].unsqueeze(0)
 
