@@ -176,7 +176,6 @@ def setup_distributed(args, local_rank):
     args.local_rank = local_rank
 
     if args.multi_node:
-        current_dir = os.getcwd()
         with open(args.hostfile) as f:
             host = f.readlines()
         host[0] = host[0].rstrip("\n")

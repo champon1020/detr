@@ -324,10 +324,10 @@ def build(args):
     # you should pass `num_classes` to be 2 (max_obj_id + 1).
     # For more details on this, check the following discussion
     # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
-    if args.dataset_file == "coco":
-        num_classes = 91
-    elif args.dataset_file == "ag":
+    if args.dataset_file == "ag":
         num_classes = 36  # include 'person'
+    elif args.dataset_file == "coco":
+        num_classes = 91
     else:
         num_classes = 20 if args.dataset_file != "coco" else 91
 

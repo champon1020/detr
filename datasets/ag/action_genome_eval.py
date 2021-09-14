@@ -3,13 +3,14 @@ import copy
 import numpy as np
 import torch
 import torch.distributed as dist
-from util.misc import all_extend, all_gather
 from tqdm import tqdm
+from util.misc import all_extend, all_gather
 
 
 class ActionGenomeEvaluator(object):
     def __init__(self, device):
         self.device = device
+        self.num_classes = 36  # include person.
         self.eval = {}
         self._reset()
 
@@ -60,6 +61,8 @@ class ActionGenomeEvaluator(object):
 
         """
 
+        n_classes = self.num_classes
+
         # Store the image indices for tracking.
         # For example, there are two images that contain 2 boxes and 3 boxes.
         # Then, true_images will be [[0, 0], [1, 1, 1]], which indicates the same indices
@@ -86,8 +89,6 @@ class ActionGenomeEvaluator(object):
         pred_scores = torch.cat(pred_scores, dim=0)
 
         assert len(pred_images) == len(pred_boxes) == len(pred_labels) == len(pred_scores)
-
-        n_classes = pred_labels.shape[-1]
 
         # Calculate average precisions for each class.
         average_precisions = torch.zeros((n_classes), dtype=torch.float)
