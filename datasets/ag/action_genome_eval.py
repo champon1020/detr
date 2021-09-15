@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from tqdm import tqdm
+from util.box_ops import box_cxcywh_to_xyxy
 from util.misc import all_extend, all_gather
 
 
@@ -15,6 +16,18 @@ class ActionGenomeEvaluator(object):
         self._reset()
 
     def update(self, predictions, targets):
+        """
+        Arguments:
+            predictions (List[Dict]): ex. [{"scores": [...], "labels": [...], "boxes": [[...], [...], ...]}]
+            targets (List[Dict]): same as dataset output.
+
+        """
+        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+        img_h, img_w = orig_target_sizes.unbind(1)
+        scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
+        for i, t in enumerate(targets):
+            t["boxes"] = (box_cxcywh_to_xyxy(t["boxes"]) * scale_fct[i]).to(self.device)
+
         self.targets.append(targets)
         self.predictions.append(predictions)
 

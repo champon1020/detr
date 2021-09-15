@@ -87,6 +87,7 @@ class ActionGenome(Dataset):
             image = Image.open(os.path.join(self.img_folder, id))
             w, h = image.size
 
+            # (xywh) -> (xyxy)
             boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
             boxes[:, 2:] += boxes[:, :2]
             boxes[:, 0::2].clamp_(min=0, max=w)
