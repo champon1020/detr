@@ -190,7 +190,7 @@ class ActionGenomeEvaluator(object):
 
         # Calculate union. Tensor[B1, B2].
         # Use torch auto-broadcasts singleton dimensions.
-        union = area_boxex1.unsqueeze(1) * area_boxex2.unsqueeze(0) - intersection
+        union = area_boxex1.unsqueeze(1) + area_boxex2.unsqueeze(0) - intersection
 
         # Tensor[B1, B2].
         return intersection / union
