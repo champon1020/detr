@@ -36,6 +36,7 @@ class ActionGenomeEvaluator(object):
         self.predictions = all_extend(self.predictions)
 
     def summarize(self):
+        dist.barrier()
         pred_boxes = []
         pred_labels = []
         pred_scores = []
@@ -118,7 +119,7 @@ class ActionGenomeEvaluator(object):
             class_pred_scores = pred_scores[pred_labels == c]
 
             # Each box is whether detected or not.
-            class_true_boxes_detected = torch.zeros((class_true_boxes.size(0)), dtype=torch.uint8)
+            class_true_boxes_detected = torch.zeros((class_true_boxes.size(0)), dtype=torch.uint8).to(self.device)
 
             # Number of detected objects in this class.
             class_n_pred_detections = class_pred_boxes.shape[0]
@@ -130,8 +131,8 @@ class ActionGenomeEvaluator(object):
             class_pred_boxes = class_pred_boxes[sort_ind]
 
             # True positives and false positives.
-            tp = torch.zeros((class_n_pred_detections), dtype=torch.float)
-            fp = torch.zeros((class_n_pred_detections), dtype=torch.float)
+            tp = torch.zeros((class_n_pred_detections), dtype=torch.float).to(self.device)
+            fp = torch.zeros((class_n_pred_detections), dtype=torch.float).to(self.device)
 
             # Loop for detected objects.
             for d in tqdm(range(class_n_pred_detections)):
@@ -179,6 +180,7 @@ class ActionGenomeEvaluator(object):
                 else:
                     precisions[i] = 0.0
             average_precisions[c] = precisions.mean()
+            print(f"Class {c} AP: {average_precisions[c]}")
 
         mean_average_precision = average_precisions.mean().item()
 
