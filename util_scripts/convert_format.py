@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import pickle
 import shutil
@@ -131,6 +132,8 @@ def main(args):
                 "id": image_id_map[image_name],
             }
         )
+
+    json.dump(annotations, open(args.dest_path, "annotations/instances.json"))
 
 
 if __name__ == "__main__":
