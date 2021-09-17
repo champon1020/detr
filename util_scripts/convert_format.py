@@ -4,11 +4,16 @@ import pickle
 import shutil
 
 from tqdm import tqdm
-from util.box_ops import list_box_xyxy_to_xywh
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ag_path", required=True, type=str)
 parser.add_argument("--dest_path", required=True, type=str)
+
+
+def list_box_xyxy_to_xywh(x):
+    x0, y0, x1, y1 = x
+    b = [x0, y0, (x1 - x0), (y1 - y0)]
+    return b
 
 
 def main(args):
