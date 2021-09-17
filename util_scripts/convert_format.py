@@ -74,7 +74,7 @@ def main(args):
 
     print("Start convert annotations")
     count_id = 0
-    for image_name in image_names:
+    for image_name in tqdm(image_names):
         rels = object_bbox_and_relationship[image_name]
 
         for rel in rels:
