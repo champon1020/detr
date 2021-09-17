@@ -4,6 +4,7 @@ import os
 import pickle
 import shutil
 
+import numpy as np
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
@@ -19,7 +20,8 @@ def list_box_xyxy_to_xywh(x):
 
 def main(args):
     print("Start process")
-    annotations = {"info": [], "licenses": [], "images": [], "annotations": [], "categories": []}
+    annotations_train = {"info": [], "licenses": [], "images": [], "annotations": [], "categories": []}
+    annotations_val = {"info": [], "licenses": [], "images": [], "annotations": [], "categories": []}
 
     image_names = []
     with open(os.path.join(args.ag_path, "annotations/frame_list.txt"), "r") as file:
@@ -33,13 +35,13 @@ def main(args):
         for line in lines:
             class_name = line.rstrip()
             object_classes[class_name] = class_id
-            annotations["categories"].append(
-                {
-                    "supercategory": class_name,
-                    "id": class_id,
-                    "name": class_name,
-                }
-            )
+            categories = {
+                "supercategory": class_name,
+                "id": class_id,
+                "name": class_name,
+            }
+            annotations_train["categories"].append(categories)
+            annotations_val["categories"].append(categories)
             class_id += 1
 
     object_bbox_and_relationship = pickle.load(
@@ -73,14 +75,17 @@ def main(args):
 
     print("Start copy frames")
     for i, image in tqdm(enumerate(image_names_with_subset)):
-        frame_path = os.path.join(args.ag_path, "frames", image["image_name"])
-        dest_path = os.path.join(args.dest_path, image["subset"], f"{i}.png")
+        # frame_path = os.path.join(args.ag_path, "frames", image["image_name"])
+        # dest_path = os.path.join(args.dest_path, image["subset"], f"{i}.png")
         image_id_map[image["image_name"]] = i
-        shutil.copy(frame_path, dest_path)
+        # shutil.copy(frame_path, dest_path)
 
     print("Start convert annotations")
     count_id = 0
-    for image_name in tqdm(image_names):
+    for image_name_subset in tqdm(image_names_with_subset):
+        image_name = image_name_subset["image_name"]
+        image_subset = image_name_subset["subset"]
+
         rels = object_bbox_and_relationship[image_name]
 
         for rel in rels:
@@ -90,50 +95,62 @@ def main(args):
             if bbox is None:
                 continue
 
-            annotations["annotations"].append(
-                {
-                    "segmentation": [],
-                    "area": 0,
-                    "iscrowd": 0,
-                    "image_id": image_id_map[image_name],
-                    "bbox": bbox,
-                    "category_id": class_id,
-                    "id": count_id,
-                }
-            )
+            annot = {
+                "segmentation": [],
+                "area": 0,
+                "iscrowd": 0,
+                "image_id": image_id_map[image_name],
+                "bbox": list(np.array(bbox, dtype=np.float64)),
+                "category_id": class_id,
+                "id": count_id,
+            }
+
+            if image_subset == "train":
+                annotations_train["annotations"].append(annot)
+            elif image_subset == "val":
+                annotations_val["annotations"].append(annot)
+
             count_id += 1
 
         person = person_bbox[image_name]
         for p_bbox in person["bbox"]:
             bbox = list_box_xyxy_to_xywh(p_bbox)
             class_id = object_classes["person"]
-            annotations["annotations"].append(
-                {
-                    "segmentation": [],
-                    "area": 0,
-                    "iscrowd": 0,
-                    "image_id": image_id_map[image_name],
-                    "bbox": bbox,
-                    "category_id": class_id,
-                    "id": count_id,
-                }
-            )
+            annot = {
+                "segmentation": [],
+                "area": 0,
+                "iscrowd": 0,
+                "image_id": image_id_map[image_name],
+                "bbox": list(np.array(bbox, dtype=np.float64)),
+                "category_id": class_id,
+                "id": count_id,
+            }
+
+            if image_subset == "train":
+                annotations_train["annotations"].append(annot)
+            elif image_subset == "val":
+                annotations_val["annotations"].append(annot)
+
             count_id += 1
 
-        annotations["images"].append(
-            {
-                "license": 1,
-                "file_name": f"{image_id_map[image_name].png}",
-                "coco_url": "",
-                "height": person[0]["bbox_size"][1],
-                "width": person[0]["bbox_size"][0],
-                "date_captured": "",
-                "flickr_url": "",
-                "id": image_id_map[image_name],
-            }
-        )
+        image_info = {
+            "license": 1,
+            "file_name": f"{image_id_map[image_name]}.png",
+            "coco_url": "",
+            "height": person["bbox_size"][1],
+            "width": person["bbox_size"][0],
+            "date_captured": "",
+            "flickr_url": "",
+            "id": image_id_map[image_name],
+        }
 
-    json.dump(annotations, open(args.dest_path, "annotations/instances.json"))
+        if image_subset == "train":
+            annotations_train["images"].append(image_info)
+        elif image_subset == "val":
+            annotations_val["images"].append(image_info)
+
+    json.dump(annotations_train, open(os.path.join(args.dest_path, "annotations/instances_train2017.json"), "w"))
+    json.dump(annotations_val, open(os.path.join(args.dest_path, "annotations/instances_val2017.json"), "w"))
 
 
 if __name__ == "__main__":
