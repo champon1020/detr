@@ -4,20 +4,19 @@ import pickle
 import shutil
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--ag_annotations_path", required=True, type=str)
-parser.add_argument("--ag_frames_path", required=True, type=str)
+parser.add_argument("--ag_path", required=True, type=str)
 parser.add_argument("--dest_path", required=True, type=str)
 
 
 def main(args):
     image_names = []
-    with open(os.path.join(args.ag_frame_list_path, "frame_list.txt"), "r") as file:
+    with open(os.path.join(args.ag_path, "annotations/frame_list.txt"), "r") as file:
         lines = file.readlines()
         image_names = [line.rstrip() for line in lines]
 
     object_bbox_and_relationship = pickle.load(
         open(
-            os.path.join(args.ag_annotations_path, "object_bbox_and_relationship.pkl"),
+            os.path.join(args.ag_path, "annotations/object_bbox_and_relationship.pkl"),
             "rb",
         )
     )
@@ -40,7 +39,7 @@ def main(args):
         os.mkdir(os.path.join(args.dest_path, "val"))
 
     for i, image in enumerate(image_names_with_subset):
-        frame_path = os.path.join(args.ag_frames_path, image["image_name"])
+        frame_path = os.path.join(args.ag_path, "frames", image["image_name"])
         dest_path = os.path.join(args.dest_path, image["subset"], f"{i}.png")
         shutil.copy(frame_path, dest_path)
 
