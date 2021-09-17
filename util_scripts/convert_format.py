@@ -47,7 +47,7 @@ def main(args):
             "rb",
         )
     )
-    person_bbox = pickle.load(open(os.path.join(args.ag_path, "annotations/person_bbox.pkl", "rb")))
+    person_bbox = pickle.load(open(os.path.join(args.ag_path, "annotations/person_bbox.pkl"), "rb"))
 
     image_names_with_subset = []
     for image_name in image_names:
