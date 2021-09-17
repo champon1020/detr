@@ -2,7 +2,6 @@
 import argparse
 import datetime
 import json
-import multiprocessing as mp
 import os
 import random
 import signal
@@ -13,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch.multiprocessing as mp
 from torch.utils.data import DataLoader, DistributedSampler
 
 import datasets
