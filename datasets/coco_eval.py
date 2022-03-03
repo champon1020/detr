@@ -213,6 +213,7 @@ def evaluate(self):
     # tic = time.time()
     # print('Running per image evaluation...')
     p = self.params
+    p.iouThrs = np.linspace(.3, 0.75, int(np.round((0.95 - .5) / .05)) + 1, endpoint=True)
     # add backward compatibility if useSegm is specified in params
     if p.useSegm is not None:
         p.iouType = 'segm' if p.useSegm == 1 else 'bbox'

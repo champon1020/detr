@@ -283,13 +283,14 @@ def _main(local_rank, args):
                     checkpoint_path,
                 )
 
+        """
         test_stats, coco_evaluator = evaluate(
             model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
         )
+        """
 
         log_stats = {
             **{f"train_{k}": v for k, v in train_stats.items()},
-            **{f"test_{k}": v for k, v in test_stats.items()},
             "epoch": epoch,
             "n_parameters": n_parameters,
         }
@@ -299,6 +300,7 @@ def _main(local_rank, args):
                 f.write(json.dumps(log_stats) + "\n")
 
             # for evaluation logs
+            """
             if coco_evaluator is not None:
                 (output_dir / "eval").mkdir(exist_ok=True)
                 if "bbox" in coco_evaluator.coco_eval:
@@ -307,6 +309,7 @@ def _main(local_rank, args):
                         filenames.append(f"{epoch:03}.pth")
                     for name in filenames:
                         torch.save(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval" / name)
+            """
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
